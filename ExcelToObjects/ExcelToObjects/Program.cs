@@ -10,10 +10,16 @@ namespace ExcelToObjects
     {
         static void Main(string[] args)
         {
-            String fileName = @"C:\projetos\Products.xlsx";
+            String fileName = @"..\..\files\Products2.xlsx";
             List<ProductModel> products = new List<ProductModel>();
-            products = ExcellToObjects.ConvertToObject<ProductModel>(fileName);
-           
+            products = new ExcellToObjects(fileName).ConvertToObject<ProductModel>();
+
+            foreach (var obj in products)
+            {
+                Console.WriteLine(obj.Id + " " + obj.Name + " " + obj.Price + " " + obj.Quantity + " " + obj.Teste);
+            }
+            Console.ReadKey();
+
         }
     }
 }

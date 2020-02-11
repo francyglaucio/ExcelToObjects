@@ -4,47 +4,56 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace ExcelToObjects
 {
-    public class ExcellToObjects
+    public class ExcellToObjects : IDisposable
     {
+        private List<Head> headList;
+        private SpreadsheetDocument spreadsheetDocument;
 
+        public ExcellToObjects(string file)
+        {
+            headList = new List<Head>();
+            spreadsheetDocument = SpreadsheetDocument.Open(file, false);
+        }
 
-        public static List<T> ConvertToObject<T>(string file) 
+        public List<T> ConvertToObject<T>()
+        {
+            IEnumerable<Row> allRows = GetRows(spreadsheetDocument);
+            var headRow = allRows.ElementAt(0);
+            var dataRows = allRows.Where(r => r.RowIndex > 1);
+            SetHead(headRow);
+            List<T> data = ConvertRowsIntoObjects<T>(dataRows);
+
+            return data;
+        }
+
+        private List<T> ConvertRowsIntoObjects<T>(IEnumerable<Row> rows)
         {
             List<T> data = new List<T>();
-
-            using (SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.Open(file, false))
+            foreach (Row row in rows)
             {
-                IEnumerable<Row> rows = GetRows(spreadsheetDocument);
-                var headList = GetHead(spreadsheetDocument, rows);
-
-                foreach (Row row in rows)
-                {
-                    T item = GetItem<T>(row, rows.ElementAt(0));
-                    data.Add(item);
-                }
+                T item = GetItem<T>(row, rows.ElementAt(0), spreadsheetDocument);
+                data.Add(item);
             }
 
             return data;
-
         }
 
-        private static List<Head> GetHead(SpreadsheetDocument spreadsheetDocument, IEnumerable<Row> rows)
+        private void SetHead(Row headRow)
         {
-            List<Head> heads = new List<Head>();
-            foreach (Cell cell in rows.ElementAt(0))
+            foreach (Cell cell in headRow)
             {
-                heads.Add(GetCellHead(spreadsheetDocument, cell));
-
+                headList.Add(GetCellHead(cell));
             }
-            return heads;
         }
 
-        private static Head GetCellHead(SpreadsheetDocument spreadsheetDocument, Cell cell)
+        private Head GetCellHead(Cell cell)
         {
             SharedStringTablePart stringTablePart = spreadsheetDocument.WorkbookPart.SharedStringTablePart;
             string value = cell.CellValue.InnerXml;
@@ -58,7 +67,7 @@ namespace ExcelToObjects
             return new Head() { Name = value, ReferenceColl = reference };
         }
 
-        private static string GetCellValue(SpreadsheetDocument spreadsheetDocument, Cell cell)
+        private string GetCellValue(SpreadsheetDocument spreadsheetDocument, Cell cell)
         {
             SharedStringTablePart stringTablePart = spreadsheetDocument.WorkbookPart.SharedStringTablePart;
             string value = cell.CellValue.InnerXml;
@@ -70,12 +79,40 @@ namespace ExcelToObjects
             return value;
         }
 
-        private static T GetItem<T>(Row row, Row head)
+        private T GetItem<T>(Row row, Row head, SpreadsheetDocument spreadSheetDocument)
         {
-            throw new NotImplementedException();
+            Type temp = typeof(T);
+            T objReturn = Activator.CreateInstance<T>();
+
+            foreach (var item in row.Descendants<Cell>())
+            {
+                var input = item.CellReference.InnerText.OnlyLetters();
+                var column = headList.FirstOrDefault(h => h.ReferenceColl == input);
+                var property = temp.GetProperties().FirstOrDefault(p => p.Name == column.Name);
+                SetValueForProperty(property, objReturn, item);
+            }
+
+            return objReturn;
         }
 
-        private static IEnumerable<Row> GetRows(SpreadsheetDocument spreadsheetDocument)
+        private void SetValueForProperty<T>(PropertyInfo property, T objReturn, Cell item)
+        {
+            if (property.PropertyType == typeof(String))
+                property.SetValue(objReturn, GetCellValue(spreadsheetDocument, item), null);
+            
+            if (property.PropertyType == typeof(int))
+                property.SetValue(objReturn, Convert.ToInt32(GetCellValue(spreadsheetDocument, item)), null);
+           
+            if (property.PropertyType == typeof(decimal?))
+                property.SetValue(objReturn, Convert.ToDecimal(GetCellValue(spreadsheetDocument, item)), null);
+            
+            if (property.PropertyType == typeof(decimal))
+                property.SetValue(objReturn, Convert.ToDecimal(GetCellValue(spreadsheetDocument, item)), null);
+
+            //Tratar outros tipos aqui   ;)
+        }
+
+        private IEnumerable<Row> GetRows(SpreadsheetDocument spreadsheetDocument)
         {
             IEnumerable<Sheet> sheets = spreadsheetDocument.WorkbookPart.Workbook.GetFirstChild<Sheets>().Elements<Sheet>();
             string relationshipId = sheets.First().Id.Value;
@@ -85,6 +122,12 @@ namespace ExcelToObjects
             IEnumerable<Row> rows = sheetData.Descendants<Row>();
             return rows;
         }
+
+        public void Dispose()
+        {
+            headList = null;
+            spreadsheetDocument = null;
+        }
     }
 
     public class Head
@@ -93,4 +136,13 @@ namespace ExcelToObjects
         public string ReferenceColl { get; set; }
     }
 
+    public static class StringExtensions
+    {
+        public static string OnlyLetters(this string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            string cleaned = new Regex(@"[^A-Z]+").Replace(s, "");
+            return cleaned;
+        }
+    }
 }
